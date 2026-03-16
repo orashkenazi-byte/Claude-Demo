@@ -1,0 +1,9 @@
+{
+  "_instructions": "Merge the 'mcpServers' block below into ~/Library/Application Support/Claude/claude_desktop_config.json, then fully restart Claude Desktop (Cmd+Q, reopen). The hammer icon in Claude's toolbar will show the tool count when connected.",
+  "mcpServers": {
+    "ai-security-demo": {
+      "command": "node",
+      "args": ["/Users/orbrown/Claude-Demo/mcp-security-demo/server.js"]
+    }
+  }
+}
