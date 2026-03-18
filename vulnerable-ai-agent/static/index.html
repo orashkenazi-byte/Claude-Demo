@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aria — Acme Financial AI Assistant</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: #003366;
+      color: white;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+
+    header .logo { font-size: 1.1rem; font-weight: 600; letter-spacing: 0.5px; }
+    header .logo span { color: #4da6ff; }
+    header .badge {
+      background: #4caf50;
+      color: white;
+      font-size: 0.7rem;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+
+    #app {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Chat panel ── */
+    #chat-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .msg { display: flex; flex-direction: column; max-width: 75%; }
+    .msg.user { align-self: flex-end; align-items: flex-end; }
+    .msg.assistant { align-self: flex-start; align-items: flex-start; }
+
+    .bubble {
+      padding: 12px 16px;
+      border-radius: 16px;
+      font-size: 0.93rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .msg.user .bubble { background: #003366; color: white; border-bottom-right-radius: 4px; }
+    .msg.assistant .bubble { background: white; border: 1px solid #dde3ec; border-bottom-left-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+
+    .msg-label { font-size: 0.72rem; color: #888; margin-bottom: 4px; font-weight: 500; }
+
+    /* Tool calls */
+    .tool-calls { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 600px; }
+    .tool-call {
+      background: #fff8e1;
+      border: 1px solid #ffe082;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.78rem;
+    }
+    .tool-call .tool-name { font-weight: 700; color: #e65100; margin-bottom: 4px; }
+    .tool-call details summary { cursor: pointer; color: #555; font-size: 0.75rem; }
+    .tool-call pre { margin-top: 4px; background: #fafafa; border-radius: 4px; padding: 6px 8px; font-size: 0.72rem; overflow-x: auto; max-height: 120px; }
+
+    /* Input bar */
+    #input-bar {
+      border-top: 1px solid #dde3ec;
+      background: white;
+      padding: 16px 24px;
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+    }
+
+    #input-bar textarea {
+      flex: 1;
+      border: 1px solid #ccd3de;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 0.93rem;
+      resize: none;
+      outline: none;
+      font-family: inherit;
+      max-height: 120px;
+      line-height: 1.4;
+    }
+    #input-bar textarea:focus { border-color: #003366; }
+
+    #input-bar button {
+      background: #003366;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 20px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      height: 42px;
+    }
+    #input-bar button:hover { background: #004a99; }
+    #input-bar button:disabled { background: #aaa; cursor: not-allowed; }
+
+    /* ── Debug sidebar ── */
+    #debug-panel {
+      width: 0;
+      overflow: hidden;
+      transition: width 0.2s;
+      border-left: 1px solid #dde3ec;
+      background: #1e1e2e;
+      color: #cdd6f4;
+      display: flex;
+      flex-direction: column;
+    }
+    #debug-panel.open { width: 380px; }
+    #debug-header {
+      padding: 12px 16px;
+      background: #181825;
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      color: #a6e3a1;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    #debug-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.72rem;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    #debug-toggle {
+      position: fixed;
+      bottom: 80px;
+      right: 16px;
+      background: #003366;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      font-weight: 600;
+      z-index: 100;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+
+    #reset-btn {
+      background: none;
+      border: 1px solid #ccd3de;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      color: #555;
+      height: 42px;
+    }
+    #reset-btn:hover { background: #f5f5f5; }
+
+    .typing { color: #888; font-style: italic; font-size: 0.85rem; padding: 4px 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">Acme Financial &nbsp;<span>Aria</span> AI Assistant</div>
+    <div class="badge">● CONNECTED</div>
+  </header>
+
+  <div id="app">
+    <div id="chat-panel">
+      <div id="messages">
+        <div class="msg assistant">
+          <div class="msg-label">Aria</div>
+          <div class="bubble">Hello! I'm Aria, your Acme Financial internal assistant. I can help you look up customer information, search internal documents, and more. How can I help you today?</div>
+        </div>
+      </div>
+      <div id="input-bar">
+        <textarea id="user-input" placeholder="Ask Aria anything..." rows="1"></textarea>
+        <button id="reset-btn" onclick="resetChat()">Reset</button>
+        <button id="send-btn" onclick="sendMessage()">Send</button>
+      </div>
+    </div>
+
+    <div id="debug-panel">
+      <div id="debug-header">
+        <span>DEBUG — RAW RESPONSE</span>
+        <span id="debug-status">—</span>
+      </div>
+      <div id="debug-content">// Send a message to see raw API response</div>
+    </div>
+  </div>
+
+  <button id="debug-toggle" onclick="toggleDebug()">⚙ Debug</button>
+
+  <script>
+    let debugOpen = false;
+
+    function toggleDebug() {
+      debugOpen = !debugOpen;
+      document.getElementById('debug-panel').classList.toggle('open', debugOpen);
+    }
+
+    async function sendMessage() {
+      const input = document.getElementById('user-input');
+      const msg = input.value.trim();
+      if (!msg) return;
+
+      input.value = '';
+      input.style.height = 'auto';
+      appendMessage('user', msg, []);
+
+      const sendBtn = document.getElementById('send-btn');
+      sendBtn.disabled = true;
+
+      const typingEl = document.createElement('div');
+      typingEl.className = 'typing';
+      typingEl.textContent = 'Aria is thinking...';
+      document.getElementById('messages').appendChild(typingEl);
+      scrollToBottom();
+
+      try {
+        const res = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: msg })
+        });
+        const data = await res.json();
+
+        typingEl.remove();
+
+        if (data.error) {
+          appendMessage('assistant', '⚠️ Error:\n' + data.error, []);
+          updateDebug(data);
+        } else {
+          appendMessage('assistant', data.response, data.tool_calls || []);
+          updateDebug(data);
+        }
+      } catch (e) {
+        typingEl.remove();
+        appendMessage('assistant', '⚠️ Network error: ' + e.message, []);
+      }
+
+      sendBtn.disabled = false;
+      scrollToBottom();
+    }
+
+    function appendMessage(role, text, toolCalls) {
+      const msgs = document.getElementById('messages');
+      const wrapper = document.createElement('div');
+      wrapper.className = `msg ${role}`;
+
+      const label = document.createElement('div');
+      label.className = 'msg-label';
+      label.textContent = role === 'user' ? 'You' : 'Aria';
+      wrapper.appendChild(label);
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = text;
+      wrapper.appendChild(bubble);
+
+      if (toolCalls && toolCalls.length > 0) {
+        const tc = document.createElement('div');
+        tc.className = 'tool-calls';
+        for (const call of toolCalls) {
+          const div = document.createElement('div');
+          div.className = 'tool-call';
+          div.innerHTML = `
+            <div class="tool-name">🔧 ${call.tool}</div>
+            <details>
+              <summary>Input / Result</summary>
+              <pre>INPUT:\n${JSON.stringify(call.input, null, 2)}\n\nRESULT:\n${call.result}</pre>
+            </details>`;
+          tc.appendChild(div);
+        }
+        wrapper.appendChild(tc);
+      }
+
+      msgs.appendChild(wrapper);
+      scrollToBottom();
+    }
+
+    function updateDebug(data) {
+      document.getElementById('debug-content').textContent = JSON.stringify(data, null, 2);
+      document.getElementById('debug-status').textContent = `${(data.tool_calls||[]).length} tool call(s)`;
+    }
+
+    async function resetChat() {
+      await fetch('/reset', { method: 'POST' });
+      const msgs = document.getElementById('messages');
+      msgs.innerHTML = `<div class="msg assistant">
+        <div class="msg-label">Aria</div>
+        <div class="bubble">Conversation reset. How can I help you?</div>
+      </div>`;
+    }
+
+    function scrollToBottom() {
+      const msgs = document.getElementById('messages');
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+
+    // Auto-resize textarea
+    document.getElementById('user-input').addEventListener('input', function () {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+    });
+
+    // Send on Enter (Shift+Enter for newline)
+    document.getElementById('user-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+  </script>
+</body>
+</html>
