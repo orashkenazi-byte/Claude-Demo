@@ -2,7 +2,7 @@ import os
 import re
 import json
 import time
-import anthropic
+from openai import OpenAI
 from datastore import CUSTOMERS, INTERNAL_DOCUMENTS, DOCUMENT_ALLOWLIST, INJECTION_PATTERNS
 
 # =============================================================================
@@ -55,7 +55,7 @@ def reset_session(session_id: str):
 def get_session_history(session_id: str) -> list:
     return _sessions.get(session_id, {}).get("history", [])
 
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 # =============================================================================
 # SECURITY CONTROL: Jailbreak / injection pattern detection
@@ -121,48 +121,60 @@ def _redact_pii_from_text(text: str) -> str:
 # =============================================================================
 TOOLS = [
     {
-        "name": "lookup_customer",
-        "description": "Look up a customer account summary by customer ID. Sensitive fields (SSN, credit card) are always masked.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "customer_id": {"type": "string", "description": "Customer ID (e.g. C001)"}
-            },
-            "required": ["customer_id"]
+        "type": "function",
+        "function": {
+            "name": "lookup_customer",
+            "description": "Look up a customer account summary by customer ID. Sensitive fields (SSN, credit card) are always masked.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "customer_id": {"type": "string", "description": "Customer ID (e.g. C001)"}
+                },
+                "required": ["customer_id"]
+            }
         }
     },
     {
-        "name": "run_query",
-        "description": "Search the customer database by name or account type. Returns non-sensitive fields only. Bulk exports are not permitted.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search term (name or account type)"}
-            },
-            "required": ["query"]
+        "type": "function",
+        "function": {
+            "name": "run_query",
+            "description": "Search the customer database by name or account type. Returns non-sensitive fields only. Bulk exports are not permitted.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search term (name or account type)"}
+                },
+                "required": ["query"]
+            }
         }
     },
     {
-        "name": "read_internal_document",
-        "description": "Read an approved internal document. Only certain documents are accessible.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "document_name": {"type": "string", "description": "Document name"}
-            },
-            "required": ["document_name"]
+        "type": "function",
+        "function": {
+            "name": "read_internal_document",
+            "description": "Read an approved internal document. Only certain documents are accessible.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "document_name": {"type": "string", "description": "Document name"}
+                },
+                "required": ["document_name"]
+            }
         }
     },
     {
-        "name": "send_notification",
-        "description": "Send an internal notification. Recipient must be an @acme.internal address.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "recipient": {"type": "string", "description": "Recipient email (@acme.internal only)"},
-                "message": {"type": "string", "description": "Notification message"}
-            },
-            "required": ["recipient", "message"]
+        "type": "function",
+        "function": {
+            "name": "send_notification",
+            "description": "Send an internal notification. Recipient must be an @acme.internal address.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "recipient": {"type": "string", "description": "Recipient email (@acme.internal only)"},
+                    "message": {"type": "string", "description": "Notification message"}
+                },
+                "required": ["recipient", "message"]
+            }
         }
     }
 ]
@@ -255,48 +267,45 @@ def chat(user_message: str, session_id: str) -> dict:
 
     tool_calls_log = []
     steps = 0
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + list(history)
 
     while steps < MAX_TOOL_STEPS:
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=4096,
-            system=SYSTEM_PROMPT,
+        response = client.chat.completions.create(
+            model="gpt-4o",
             tools=TOOLS,
-            messages=history
+            messages=messages
         )
 
-        if response.stop_reason == "tool_use":
+        message = response.choices[0].message
+        finish_reason = response.choices[0].finish_reason
+
+        if finish_reason == "tool_calls" and message.tool_calls:
             steps += 1
-            history.append({"role": "assistant", "content": response.content})
-            tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    result = execute_tool(block.name, block.input, session_id)
-                    tool_calls_log.append({
-                        "tool": block.name,
-                        "input": block.input,
-                        "result": result
-                    })
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result
-                    })
-            history.append({"role": "user", "content": tool_results})
+            messages.append(message)
+            for tc in message.tool_calls:
+                tool_input = json.loads(tc.function.arguments)
+                result = execute_tool(tc.function.name, tool_input, session_id)
+                tool_calls_log.append({
+                    "tool": tc.function.name,
+                    "input": tool_input,
+                    "result": result
+                })
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result
+                })
         else:
-            final_text = "".join(
-                block.text for block in response.content if hasattr(block, "text")
-            )
+            final_text = message.content or ""
             # SECURITY: Post-process output to catch any PII that slipped through
             final_text = _redact_pii_from_text(final_text)
             history.append({"role": "assistant", "content": final_text})
             return {
                 "response": final_text,
                 "tool_calls": tool_calls_log,
-                "stop_reason": response.stop_reason
+                "stop_reason": finish_reason
             }
 
-    # Hit step limit
     return {
         "response": "I was unable to complete this request within the allowed number of steps.",
         "tool_calls": tool_calls_log,

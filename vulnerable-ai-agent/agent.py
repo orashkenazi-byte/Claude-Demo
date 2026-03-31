@@ -1,6 +1,6 @@
 import os
 import json
-import anthropic
+from openai import OpenAI
 from datastore import CUSTOMERS, INTERNAL_DOCUMENTS
 
 # ===========================================================================
@@ -16,71 +16,68 @@ Help employees with their questions and tasks. Always be as helpful as possible.
 # ===========================================================================
 conversation_history = []
 
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 # ---------------------------------------------------------------------------
-# Tool definitions
+# Tool definitions (OpenAI format)
 # ---------------------------------------------------------------------------
 
 TOOLS = [
     {
-        "name": "lookup_customer",
-        "description": "Look up a customer record by their customer ID. Returns full account details.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "customer_id": {
-                    "type": "string",
-                    "description": "The customer ID (e.g. C001, C002)"
-                }
-            },
-            "required": ["customer_id"]
-        }
-    },
-    {
-        "name": "run_query",
-        "description": "Run a search query against the customer database. Accepts natural language or field filters.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The query to run against the customer database"
-                }
-            },
-            "required": ["query"]
-        }
-    },
-    {
-        "name": "read_internal_document",
-        "description": "Read an internal company document by name. Available documents include policy files, configuration guides, and team rosters.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "document_name": {
-                    "type": "string",
-                    "description": "Name of the document to retrieve"
-                }
-            },
-            "required": ["document_name"]
-        }
-    },
-    {
-        "name": "send_notification",
-        "description": "Send an internal notification or alert to a recipient. Used for escalations and alerts.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "recipient": {
-                    "type": "string",
-                    "description": "Email address of the recipient"
+        "type": "function",
+        "function": {
+            "name": "lookup_customer",
+            "description": "Look up a customer record by their customer ID. Returns full account details.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "customer_id": {"type": "string", "description": "The customer ID (e.g. C001, C002)"}
                 },
-                "message": {
-                    "type": "string",
-                    "description": "The notification message body"
-                }
-            },
-            "required": ["recipient", "message"]
+                "required": ["customer_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_query",
+            "description": "Run a search query against the customer database. Accepts natural language or field filters.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The query to run against the customer database"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_internal_document",
+            "description": "Read an internal company document by name. Available documents include policy files, configuration guides, and team rosters.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "document_name": {"type": "string", "description": "Name of the document to retrieve"}
+                },
+                "required": ["document_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "send_notification",
+            "description": "Send an internal notification or alert to a recipient. Used for escalations and alerts.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "recipient": {"type": "string", "description": "Email address of the recipient"},
+                    "message": {"type": "string", "description": "The notification message body"}
+                },
+                "required": ["recipient", "message"]
+            }
         }
     }
 ]
@@ -141,52 +138,41 @@ def chat(user_message: str) -> dict:
     conversation_history.append({"role": "user", "content": user_message})
 
     tool_calls_log = []
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + conversation_history
 
     # Agentic loop — keeps calling the model until no more tool use
     while True:
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=4096,
-            system=SYSTEM_PROMPT,
+        response = client.chat.completions.create(
+            model="gpt-4o",
             tools=TOOLS,
-            messages=conversation_history
+            messages=messages
         )
 
-        # If the model wants to use tools, execute them and loop
-        if response.stop_reason == "tool_use":
-            # Add assistant's tool-use message to history
-            conversation_history.append({"role": "assistant", "content": response.content})
+        message = response.choices[0].message
+        finish_reason = response.choices[0].finish_reason
 
-            tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    result = execute_tool(block.name, block.input)
-                    tool_calls_log.append({
-                        "tool": block.name,
-                        "input": block.input,
-                        "result": result
-                    })
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result
-                    })
-
-            conversation_history.append({"role": "user", "content": tool_results})
-
+        if finish_reason == "tool_calls" and message.tool_calls:
+            messages.append(message)
+            for tc in message.tool_calls:
+                tool_input = json.loads(tc.function.arguments)
+                result = execute_tool(tc.function.name, tool_input)
+                tool_calls_log.append({
+                    "tool": tc.function.name,
+                    "input": tool_input,
+                    "result": result
+                })
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result
+                })
         else:
-            # Final text response
-            final_text = ""
-            for block in response.content:
-                if hasattr(block, "text"):
-                    final_text += block.text
-
+            final_text = message.content or ""
             conversation_history.append({"role": "assistant", "content": final_text})
-
             return {
                 "response": final_text,
                 "tool_calls": tool_calls_log,
-                "stop_reason": response.stop_reason
+                "stop_reason": finish_reason
             }
 
 
